@@ -170,22 +170,35 @@ def search_by_text(
     Embeds the query text into CLAP's shared audio-text space and finds
     tracks whose audio embeddings are closest to the description.
     """
+    import contextlib
+    import logging
+    import os
+    import sys
     import warnings
-
-    import torch
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        import laion_clap
-
     from pathlib import Path
 
-    model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-tiny")
-    ckpt = Path(CLAP_CKPT).expanduser()
-    if ckpt.exists():
-        model.load_ckpt(ckpt=str(ckpt))
-    else:
-        model.load_ckpt()
+    # Suppress all CLAP/torch loading noise
+    logging.disable(logging.CRITICAL)
+    devnull = open(os.devnull, "w")
+    old_stdout, old_stderr = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = devnull, devnull
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            import torch
+
+            import laion_clap
+
+            model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-tiny")
+            ckpt = Path(CLAP_CKPT).expanduser()
+            if ckpt.exists():
+                model.load_ckpt(ckpt=str(ckpt))
+            else:
+                model.load_ckpt()
+    finally:
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+        devnull.close()
+        logging.disable(logging.NOTSET)
     model.eval()
 
     with torch.no_grad():
