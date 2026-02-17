@@ -11,8 +11,6 @@ use walkdir::WalkDir;
 use crate::db;
 use crate::models::{AUDIO_EXTENSIONS, Album, Track};
 
-const BATCH_SIZE: usize = 500;
-
 fn track_id(filepath: &str) -> String {
     let hash = Sha256::digest(filepath.as_bytes());
     hex::encode(&hash[..8])
@@ -134,8 +132,7 @@ pub fn scan_library(library_path: &Path, quiet: bool) -> Result<(usize, usize)> 
     };
 
     let mut db = db::open_db()?;
-    let mut batch: Vec<Track> = Vec::with_capacity(BATCH_SIZE);
-    let mut total_tracks = 0usize;
+    let mut all_tracks: Vec<Track> = Vec::with_capacity(audio_files.len());
     let mut album_data: HashMap<String, AlbumAccumulator> = HashMap::new();
 
     for filepath in &audio_files {
@@ -159,20 +156,13 @@ pub fn scan_library(library_path: &Path, quiet: bool) -> Result<(usize, usize)> 
             *entry.genres.entry(track.genre.clone()).or_insert(0) += 1;
         }
 
-        batch.push(track);
-        total_tracks += 1;
-
-        if batch.len() >= BATCH_SIZE {
-            db::upsert_tracks(&mut db, &batch)?;
-            batch.clear();
-        }
+        all_tracks.push(track);
     }
 
-    if !batch.is_empty() {
-        db::upsert_tracks(&mut db, &batch)?;
-    }
+    let total_tracks = all_tracks.len();
+    db::write_all_tracks(&mut db, &all_tracks)?;
 
-    // Build and upsert albums
+    // Build and write albums
     let albums: Vec<Album> = album_data
         .into_values()
         .map(|acc| {
@@ -197,9 +187,7 @@ pub fn scan_library(library_path: &Path, quiet: bool) -> Result<(usize, usize)> 
         .collect();
 
     let album_count = albums.len();
-    for chunk in albums.chunks(BATCH_SIZE) {
-        db::upsert_albums(&mut db, chunk)?;
-    }
+    db::write_all_albums(&mut db, &albums)?;
 
     pb.finish_and_clear();
     Ok((total_tracks, album_count))

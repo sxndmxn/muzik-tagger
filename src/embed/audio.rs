@@ -20,7 +20,6 @@ use super::{ensure_models_dir, normalize};
 
 const CLAP_MODEL_NAME: &str = "clap-htsat-unfused";
 const CLAP_BASE_URL: &str = "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/main";
-const DB_BATCH_SIZE: usize = 256;
 const SAMPLE_RATE: u32 = 48000;
 const TARGET_SAMPLES: usize = SAMPLE_RATE as usize * 10; // 10 seconds
 
@@ -461,13 +460,8 @@ pub fn embed_audio(quiet: bool) -> Result<usize> {
 
     pb.finish_and_clear();
 
-    // Write ALL tracks at once (same pattern as metadata.rs).
-    // Partial upserts of only changed tracks don't persist reliably
-    // with LanceDB FixedSizeList columns.
     if count > 0 {
-        for chunk in updated_tracks.chunks(DB_BATCH_SIZE) {
-            db::update_tracks(&mut db, chunk)?;
-        }
+        db::write_all_tracks(&mut db, &updated_tracks)?;
     }
 
     // Aggregate album audio vectors
@@ -526,9 +520,7 @@ fn aggregate_album_audio(db: &mut db::Db) -> Result<()> {
     }
 
     if !updated.is_empty() {
-        for chunk in updated.chunks(DB_BATCH_SIZE) {
-            db::update_albums(db, chunk)?;
-        }
+        db::write_all_albums(db, &albums)?;
     }
 
     Ok(())

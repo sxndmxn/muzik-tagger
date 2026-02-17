@@ -10,7 +10,6 @@ use crate::models::{METADATA_DIM, Track, is_zero_vec};
 use super::{ensure_models_dir, normalize};
 
 const MODEL_NAME: &str = "all-MiniLM-L6-v2";
-const DB_BATCH_SIZE: usize = 256;
 
 /// Download the `MiniLM` ONNX model and tokenizer if not present.
 fn ensure_model() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
@@ -161,10 +160,7 @@ pub fn embed_metadata(quiet: bool) -> Result<usize> {
         updated_tracks[idx].metadata_vec = vec;
     }
 
-    // Batch upsert
-    for chunk in updated_tracks.chunks(DB_BATCH_SIZE) {
-        db::update_tracks(&mut db, chunk)?;
-    }
+    db::write_all_tracks(&mut db, &updated_tracks)?;
 
     pb.finish_and_clear();
 
@@ -224,9 +220,7 @@ fn aggregate_album_metadata(db: &mut db::Db) -> Result<()> {
     }
 
     if !updated.is_empty() {
-        for chunk in updated.chunks(DB_BATCH_SIZE) {
-            db::update_albums(db, chunk)?;
-        }
+        db::write_all_albums(db, &albums)?;
     }
 
     Ok(())

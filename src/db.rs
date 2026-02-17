@@ -7,7 +7,7 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
-use lancedb::query::ExecutableQuery;
+use lancedb::query::{ExecutableQuery, QueryBase};
 
 use crate::models::{AUDIO_DIM, Album, METADATA_DIM, Track};
 
@@ -184,7 +184,25 @@ pub fn open_db() -> Result<Db> {
     Ok(Db { conn })
 }
 
-/// Get or create the tracks table.
+/// Atomically write a table using `create_table` with overwrite mode.
+///
+/// `LanceDB` sequential open/delete/add cycles lose data due to version
+/// conflicts, so we always write the full table in one shot.
+async fn overwrite_table(
+    conn: &lancedb::Connection,
+    name: &str,
+    batch: RecordBatch,
+) -> Result<()> {
+    let schema = batch.schema();
+    let batches = RecordBatchIterator::new(vec![Ok(batch)], schema);
+    conn.create_table(name, Box::new(batches))
+        .mode(lancedb::database::CreateTableMode::Overwrite)
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Get or create an empty table (for reads when no data has been written yet).
 async fn get_or_create_tracks(conn: &lancedb::Connection) -> Result<lancedb::Table> {
     let tables = conn.table_names().execute().await?;
     if tables.iter().any(|n| n == "tracks") {
@@ -200,7 +218,7 @@ async fn get_or_create_tracks(conn: &lancedb::Connection) -> Result<lancedb::Tab
     }
 }
 
-/// Get or create the albums table.
+/// Get or create an empty albums table.
 async fn get_or_create_albums(conn: &lancedb::Connection) -> Result<lancedb::Table> {
     let tables = conn.table_names().execute().await?;
     if tables.iter().any(|n| n == "albums") {
@@ -216,43 +234,27 @@ async fn get_or_create_albums(conn: &lancedb::Connection) -> Result<lancedb::Tab
     }
 }
 
-/// Upsert tracks into the database.
-pub fn upsert_tracks(db: &mut Db, tracks: &[Track]) -> Result<()> {
+/// Write all tracks atomically (replaces the entire tracks table).
+pub fn write_all_tracks(db: &mut Db, tracks: &[Track]) -> Result<()> {
     if tracks.is_empty() {
         return Ok(());
     }
     let rt = runtime()?;
     rt.block_on(async {
-        let table = get_or_create_tracks(&db.conn).await?;
-        // Delete existing rows by ID, then re-insert.
-        // merge_insert doesn't persist FixedSizeList updates reliably.
-        let ids: Vec<String> = tracks.iter().map(|t| format!("'{}'", t.id)).collect();
-        let filter = format!("id IN ({})", ids.join(", "));
-        table.delete(&filter).await?;
         let batch = tracks_to_batch(tracks)?;
-        let schema = batch.schema();
-        let batches = RecordBatchIterator::new(vec![Ok(batch)], schema);
-        table.add(Box::new(batches)).execute().await?;
-        Ok(())
+        overwrite_table(&db.conn, "tracks", batch).await
     })
 }
 
-/// Upsert albums into the database.
-pub fn upsert_albums(db: &mut Db, albums: &[Album]) -> Result<()> {
+/// Write all albums atomically (replaces the entire albums table).
+pub fn write_all_albums(db: &mut Db, albums: &[Album]) -> Result<()> {
     if albums.is_empty() {
         return Ok(());
     }
     let rt = runtime()?;
     rt.block_on(async {
-        let table = get_or_create_albums(&db.conn).await?;
-        let ids: Vec<String> = albums.iter().map(|a| format!("'{}'", a.id)).collect();
-        let filter = format!("id IN ({})", ids.join(", "));
-        table.delete(&filter).await?;
         let batch = albums_to_batch(albums)?;
-        let schema = batch.schema();
-        let batches = RecordBatchIterator::new(vec![Ok(batch)], schema);
-        table.add(Box::new(batches)).execute().await?;
-        Ok(())
+        overwrite_table(&db.conn, "albums", batch).await
     })
 }
 
@@ -263,6 +265,7 @@ pub fn all_tracks(db: &Db) -> Result<Vec<Track>> {
         let table = get_or_create_tracks(&db.conn).await?;
         let batches: Vec<RecordBatch> = table
             .query()
+            .limit(i32::MAX as usize)
             .execute()
             .await?
             .try_collect()
@@ -282,6 +285,7 @@ pub fn all_albums(db: &Db) -> Result<Vec<Album>> {
         let table = get_or_create_albums(&db.conn).await?;
         let batches: Vec<RecordBatch> = table
             .query()
+            .limit(i32::MAX as usize)
             .execute()
             .await?
             .try_collect()
@@ -312,16 +316,6 @@ pub fn find_album(db: &Db, artist: &str, album: &str) -> Result<Option<Album>> {
     Ok(albums
         .into_iter()
         .find(|a| a.artist.to_lowercase() == artist_lower && a.album.to_lowercase() == album_lower))
-}
-
-/// Update tracks in-place (for embedding updates).
-pub fn update_tracks(db: &mut Db, tracks: &[Track]) -> Result<()> {
-    upsert_tracks(db, tracks)
-}
-
-/// Update albums in-place (for embedding updates).
-pub fn update_albums(db: &mut Db, albums: &[Album]) -> Result<()> {
-    upsert_albums(db, albums)
 }
 
 fn extract_fixed_list_f32(
