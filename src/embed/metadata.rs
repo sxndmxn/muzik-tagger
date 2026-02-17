@@ -123,7 +123,7 @@ pub fn embed_metadata(quiet: bool) -> Result<usize> {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40} {pos}/{len} Embedding metadata")
-                .expect("template"),
+                .map_err(|e| anyhow::anyhow!("progress template: {e}"))?,
         );
         pb
     };

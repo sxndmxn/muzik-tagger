@@ -15,7 +15,7 @@ use crate::models::is_zero_vec;
 use crate::recommend;
 
 use super::protocol::{
-    MzkCodec, PROTOCOL_NAME, PeerResult, SearchQuery, SearchResponse,
+    MzkCodec, PROTOCOL_NAME, PeerResult, SearchQuery, SearchResponse, audio_fingerprint,
 };
 
 /// Combined network behaviour.
@@ -203,6 +203,11 @@ pub fn handle_search_query(query: &SearchQuery) -> SearchResponse {
                 .filter(|t| !is_zero_vec(&t.audio_vec))
                 .map(|t| {
                     let score = recommend::cosine_sim(query_vec, &t.audio_vec);
+                    let fp = if is_zero_vec(&t.audio_vec) {
+                        None
+                    } else {
+                        Some(audio_fingerprint(&t.audio_vec))
+                    };
                     PeerResult {
                         score,
                         artist: t.artist.clone(),
@@ -210,6 +215,7 @@ pub fn handle_search_query(query: &SearchQuery) -> SearchResponse {
                         album: t.album.clone(),
                         year: t.year,
                         peer_id: local_peer_id.clone(),
+                        audio_fingerprint: fp,
                     }
                 })
                 .collect();
@@ -240,6 +246,11 @@ pub fn handle_search_query(query: &SearchQuery) -> SearchResponse {
                         &t.audio_vec,
                         *weight_audio,
                     );
+                    let fp = if is_zero_vec(&t.audio_vec) {
+                        None
+                    } else {
+                        Some(audio_fingerprint(&t.audio_vec))
+                    };
                     PeerResult {
                         score,
                         artist: t.artist.clone(),
@@ -247,6 +258,7 @@ pub fn handle_search_query(query: &SearchQuery) -> SearchResponse {
                         album: t.album.clone(),
                         year: t.year,
                         peer_id: local_peer_id.clone(),
+                        audio_fingerprint: fp,
                     }
                 })
                 .collect();

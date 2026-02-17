@@ -28,20 +28,17 @@ pub fn hybrid_score(
     cand_audio: &[f32],
     weight_audio: f32,
 ) -> f32 {
+    let meta_score = match query_meta {
+        Some(qm) if !is_zero_vec(cand_meta) => cosine_sim(qm, cand_meta),
+        _ => 0.0,
+    };
     let has_meta = query_meta.is_some() && !is_zero_vec(cand_meta);
+
+    let audio_score = match query_audio {
+        Some(qa) if !is_zero_vec(cand_audio) => cosine_sim(qa, cand_audio),
+        _ => 0.0,
+    };
     let has_audio = query_audio.is_some() && !is_zero_vec(cand_audio);
-
-    let meta_score = if has_meta {
-        cosine_sim(query_meta.unwrap(), cand_meta)
-    } else {
-        0.0
-    };
-
-    let audio_score = if has_audio {
-        cosine_sim(query_audio.unwrap(), cand_audio)
-    } else {
-        0.0
-    };
 
     match (has_audio, has_meta) {
         (true, true) => (1.0 - weight_audio) * meta_score + weight_audio * audio_score,
